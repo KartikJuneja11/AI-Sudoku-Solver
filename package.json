@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.6",
+    "chart.js": "^4.4.9",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-py": "^1.11.3",

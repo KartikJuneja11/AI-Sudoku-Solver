@@ -1,8 +1,10 @@
-// src/App.jsx
 import { useState, useEffect } from 'react';
 import SudokuBoard from './components/SudokuBoard';
 import Controls from './components/Controls';
 import NumberPad from './components/NumberPad';
+import MetricsTable from './components/MetricsTable';
+import ComparisonChart from './components/ComparisonChart';
+import AlgorithmDescription from './components/AlgorithmDescription';
 import { generateSudoku } from './lib/sudokuGenerator';
 import { validateSudoku, isBoardValid, isBoardComplete, getRelatedCells } from './lib/sudokuUtils';
 import { saveSudokuGame, loadSudokuGame, hasSavedGame } from './lib/sudokuStorage';
@@ -15,10 +17,12 @@ const App = () => {
   const [relatedCells, setRelatedCells] = useState([]);
   const [difficulty, setDifficulty] = useState('Easy');
   const [notesMode, setNotesMode] = useState(false);
-  const [showSolverUI, setShowSolverUI] = useState(false);
-  const [solverOutput, setSolverOutput] = useState('');
-  const [isSolving, setIsSolving] = useState(false); // For loading state during API call
-
+  const [algorithm, setAlgorithm] = useState('Naive');
+  const [metrics, setMetrics] = useState(null);
+  const [comparisonResults, setComparisonResults] = useState([]);
+  const [isSolving, setIsSolving] = useState(false);
+  const [visualizationUrls, setVisualizationUrls] = useState([]);
+  const [showVisualization, setShowVisualization] = useState(false);
 
   useEffect(() => {
     if (hasSavedGame()) {
@@ -33,34 +37,37 @@ const App = () => {
 
   const startNewGame = (newDifficulty = difficulty) => {
     const diff = newDifficulty || 'Easy';
-    const { puzzle } = generateSudoku(diff); // Solution from generator not strictly needed if backend solves
-
-    const newBoard = Array(9).fill(null).map((_, row) =>
+    const { puzzle } = generateSudoku(diff);
+    
+    const newBoard = Array(9).fill(null).map((_, row) => 
       Array(9).fill(null).map((_, col) => {
         const value = puzzle[row][col];
-        return {
-          value: value === 0 ? null : value,
-          isInitial: value !== 0,
-          notes: [],
-          isValid: true
+        return { 
+          value: value === 0 ? null : value, 
+          isInitial: value !== 0, 
+          notes: [], 
+          isValid: true 
         };
       })
     );
-
+    
     setBoard(newBoard);
-    setInitialBoard(JSON.parse(JSON.stringify(newBoard))); // Deep copy
+    setInitialBoard(JSON.parse(JSON.stringify(newBoard)));
     setSelectedCell(null);
     setRelatedCells([]);
     setDifficulty(diff);
-    setSolverOutput('');
+    setMetrics(null);
+    setComparisonResults([]);
+    setVisualizationUrls([]);
+    setShowVisualization(false);
     setIsSolving(false);
   };
 
   const resetGame = () => {
-    setBoard(JSON.parse(JSON.stringify(initialBoard))); // Deep copy
+    setBoard(JSON.parse(JSON.stringify(initialBoard)));
     setSelectedCell(null);
     setRelatedCells([]);
-    setSolverOutput('');
+    setMetrics(null);
     setIsSolving(false);
   };
 
@@ -71,17 +78,16 @@ const App = () => {
 
   const updateCell = (value) => {
     if (!selectedCell || isSolving) return;
-
     const [row, col] = selectedCell;
     if (board[row][col].isInitial) return;
-
-    const newBoard = JSON.parse(JSON.stringify(board)); // Deep copy
-
+    
+    const newBoard = JSON.parse(JSON.stringify(board));
+    
     if (notesMode && value !== null) {
       const noteIndex = newBoard[row][col].notes.indexOf(value);
       if (noteIndex === -1) {
         newBoard[row][col].notes.push(value);
-        newBoard[row][col].notes.sort((a, b) => a - b); // Keep notes sorted
+        newBoard[row][col].notes.sort((a, b) => a - b);
       } else {
         newBoard[row][col].notes.splice(noteIndex, 1);
       }
@@ -89,27 +95,27 @@ const App = () => {
     } else {
       newBoard[row][col].value = value;
       newBoard[row][col].notes = [];
-      const isValidMove = validateSudoku(newBoard, row, col); // Validate individual move
+      const isValidMove = validateSudoku(newBoard, row, col);
       newBoard[row][col].isValid = isValidMove;
     }
+    
     setBoard(newBoard);
-
+    
     if (!notesMode && value !== null && isBoardComplete(newBoard) && isBoardValid(newBoard)) {
       alert('Congratulations! You solved the puzzle!');
     }
   };
 
   const clearSelectedCell = () => {
-    if (!selectedCell || isSolving || !board[selectedCell[0]] || !board[selectedCell[0]][selectedCell[1]]) return;
-
+    if (!selectedCell || isSolving) return;
     const [row, col] = selectedCell;
     if (board[row][col].isInitial) return;
-
-    const newBoard = JSON.parse(JSON.stringify(board)); // Deep copy
+    
+    const newBoard = JSON.parse(JSON.stringify(board));
     newBoard[row][col].value = null;
     newBoard[row][col].notes = [];
-    newBoard[row][col].isValid = true; // Clearing makes it valid or unchecked
-
+    newBoard[row][col].isValid = true;
+    
     setBoard(newBoard);
   };
 
@@ -118,10 +124,11 @@ const App = () => {
   };
 
   const saveGame = () => {
-    saveSudokuGame({
-      board,
-      initialBoard,
-      difficulty
+    saveSudokuGame({ 
+      board, 
+      initialBoard, 
+      difficulty, 
+      algorithm 
     });
     alert('Game saved successfully!');
   };
@@ -132,156 +139,205 @@ const App = () => {
       alert('No saved game found!');
       return false;
     }
+    
     setBoard(savedGame.board);
     setInitialBoard(savedGame.initialBoard);
     setDifficulty(savedGame.difficulty);
+    setAlgorithm(savedGame.algorithm || 'Naive');
     setSelectedCell(null);
     setRelatedCells([]);
-    setSolverOutput('');
+    setMetrics(null);
     setIsSolving(false);
+    
     return true;
-  };
-  const toggleSolverUI = () => {
-    setShowSolverUI(!showSolverUI);
   };
 
   const solveSudokuWithAPI = async () => {
     setIsSolving(true);
-    setSolverOutput('Solving with backend...');
-
-    // Convert board to simple 2D array of numbers (0 for null/empty)
-    const boardForAPI = board.map(row =>
-      row.map(cell => cell.value || 0)
-    );
-
+    setMetrics(null);
+    const boardForAPI = board.map(row => row.map(cell => cell.value || 0));
+    
     try {
-      const response = await fetch('http://localhost:5001/solve-sudoku', { // Ensure port matches Flask app
+      const response = await fetch('http://localhost:5001/solve-sudoku', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ board: boardForAPI }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ board: boardForAPI, algorithm, difficulty }),
       });
-
+      
       const result = await response.json();
-
+      
       if (!response.ok) {
-        // Handle HTTP errors (e.g., 400, 422, 500)
-        setSolverOutput(`Error: ${result.error || `Server responded with ${response.status}`}`);
-        setIsSolving(false);
+        alert(`Error: ${result.error || `Server responded with ${response.status}`}`);
         return;
       }
       
       if (result.solution) {
         const solvedBoardFromAPI = result.solution;
-        const newBoard = JSON.parse(JSON.stringify(board)); // Start with current board structure
-
+        const newBoard = JSON.parse(JSON.stringify(board));
+        
         solvedBoardFromAPI.forEach((rowValues, rowIndex) => {
           rowValues.forEach((value, colIndex) => {
-            // Only update non-initial cells
             if (!newBoard[rowIndex][colIndex].isInitial && value !== 0) {
               newBoard[rowIndex][colIndex].value = value;
-              newBoard[rowIndex][colIndex].notes = []; // Clear notes
-              newBoard[rowIndex][colIndex].isValid = true; // Solved cells are valid
+              newBoard[rowIndex][colIndex].notes = [];
+              newBoard[rowIndex][colIndex].isValid = true;
             }
           });
         });
+        
         setBoard(newBoard);
-        setSolverOutput("Sudoku solved successfully by the backend!");
+        setMetrics(result.metrics);
       } else if (result.error) {
-         setSolverOutput(`Solver Error: ${result.error}`);
-      } else {
-         setSolverOutput("Unknown response from solver.");
+        alert(`Solver Error: ${result.error}`);
       }
-
     } catch (error) {
       console.error("API call failed:", error);
-      setSolverOutput(`Network Error: Could not connect to the solver. (${error.message})`);
+      alert(`Network Error: Could not connect to the solver. (${error.message})`);
+    } finally {
+      setIsSolving(false);
+    }
+  };
+
+  const compareAlgorithms = async () => {
+    setIsSolving(true);
+    setComparisonResults([]);
+    const boardForAPI = board.map(row => row.map(cell => cell.value || 0));
+    
+    try {
+      const response = await fetch('http://localhost:5001/compare-algorithms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ board: boardForAPI, difficulty }),
+      });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        alert(`Error: ${result.error || `Server responded with ${response.status}`}`);
+        return;
+      }
+      
+      if (result.results) {
+        setComparisonResults(result.results);
+      }
+    } catch (error) {
+      console.error("API call failed:", error);
+      alert(`Network Error: Could not connect to the solver. (${error.message})`);
+    } finally {
+      setIsSolving(false);
+    }
+  };
+
+  const visualizeResults = async () => {
+    setIsSolving(true);
+    setVisualizationUrls([]);
+    setShowVisualization(false);
+    
+    try {
+      const response = await fetch('http://localhost:5001/visualize');
+      const result = await response.json();
+      
+      if (!response.ok) {
+        alert(`Error: ${result.error || `Server responded with ${response.status}`}`);
+        return;
+      }
+      
+      if (result.plots) {
+        setVisualizationUrls(result.plots.map(plot => `http://localhost:5001${plot}`));
+        setShowVisualization(true);
+      }
+    } catch (error) {
+      console.error("API call failed:", error);
+      alert(`Network Error: Could not connect to the solver. (${error.message})`);
     } finally {
       setIsSolving(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 dark:bg-gray-900 py-6">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
-        <header className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Sudoku</h1>
-          <div className="flex space-x-4 items-center">
-            <div className="flex space-x-2">
-              <button onClick={saveGame} className="text-sm text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300">
-                Save Game
-              </button>
-              <button onClick={loadGame} className="text-sm text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300">
-                Load Game
-              </button>
-            </div>
-            <ThemeToggle />
+    <div className="min-h-screen flex flex-col bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+      <header className="flex justify-between items-center p-4 bg-white dark:bg-gray-800 shadow-md">
+        <h1 className="text-3xl font-bold">Sudoku Solver</h1>
+        <ThemeToggle />
+      </header>
+      
+      <main className="flex-1 p-6">
+        <div className="flex flex-col lg:flex-row gap-8">
+          <div className="flex flex-col gap-6 w-full lg:w-1/3">
+            <Controls 
+              difficulty={difficulty}
+              onNewGame={startNewGame}
+              onReset={resetGame}
+              onSaveGame={saveGame}
+              onLoadGame={loadGame}
+              onToggleNotes={toggleNotesMode}
+              notesMode={notesMode}
+              algorithm={algorithm}
+              onAlgorithmChange={setAlgorithm}
+              onSolve={solveSudokuWithAPI}
+              onCompare={compareAlgorithms}
+              onVisualize={visualizeResults}
+              isSolving={isSolving}
+              className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md"
+            />
+            <AlgorithmDescription 
+              algorithm={algorithm}
+              className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md"
+            />
           </div>
-        </header>
-
-        <Controls
-          difficulty={difficulty}
-          onNewGame={startNewGame}
-          onReset={resetGame}
-          onToggleNotes={toggleNotesMode}
-          notesMode={notesMode}
-        />
-
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className={`${showSolverUI ? 'md:w-1/2' : 'w-full'}`}> {/* Adjust width based on solver UI */}
-            <SudokuBoard
+          
+          <div className="flex flex-col items-center gap-6 w-full lg:w-2/3">
+            <SudokuBoard 
               board={board}
               selectedCell={selectedCell}
               relatedCells={relatedCells}
               onCellClick={selectCell}
+              className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md"
             />
-            <NumberPad
+            <NumberPad 
               onNumberClick={updateCell}
-              onClear={clearSelectedCell}
+              onClearClick={clearSelectedCell}
+              disabled={isSolving}
+              className="grid grid-cols-5 gap-2"
             />
           </div>
-
-          {showSolverUI && (
-            <div className="md:w-1/2">
-              <div className="bg-white dark:bg-gray-800 rounded-lg p-4 h-full shadow">
-                <h2 className="text-lg font-bold mb-2 text-gray-900 dark:text-white">Backend Solver</h2>
-                {solverOutput ? (
-                  <pre className="bg-gray-100 dark:bg-gray-900 p-4 rounded overflow-auto max-h-96 text-sm whitespace-pre-wrap">
-                    {solverOutput}
-                  </pre>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-64">
-                    <p className="text-gray-600 dark:text-gray-400 mb-4">
-                      Click the button to solve the current Sudoku using the Python backend.
-                    </p>
+        </div>
+        
+        <div className="mt-8">
+          {metrics && (
+            <MetricsTable 
+              metrics={metrics}
+              className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md"
+            />
+          )}
+          {comparisonResults.length > 0 && (
+            <ComparisonChart 
+              results={comparisonResults}
+              className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md mt-6"
+            />
+          )}
+          {showVisualization && visualizationUrls.length > 0 && (
+            <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md mt-6">
+              <h3 className="text-lg font-semibold mb-4">Performance Visualizations</h3>
+              <div className="grid gap-4 md:grid-cols-2">
+                {visualizationUrls.map((url, index) => (
+                  <div key={index} className="bg-gray-50 dark:bg-gray-700 p-2 rounded-lg">
+                    <img 
+                      src={url} 
+                      alt={`Performance plot ${index+1}`}
+                      className="max-w-full h-auto object-contain rounded"
+                    />
                   </div>
-                )}
-                 <button
-                      className={`w-full mt-4 bg-green-500 text-white px-4 py-2 rounded ${isSolving ? 'opacity-50 cursor-not-allowed' : 'hover:bg-green-600'}`}
-                      onClick={solveSudokuWithAPI}
-                      disabled={isSolving}
-                    >
-                      {isSolving ? 'Solving...' : 'Solve with Backend API'}
-                    </button>
+                ))}
               </div>
             </div>
           )}
         </div>
-
-        <div className="mt-6 flex justify-center">
-          <button
-            className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded flex items-center"
-            onClick={toggleSolverUI}
-          >
-            {showSolverUI ? 'Hide Solver' : 'Show Solver'}
-          </button>
-        </div>
-
-        <footer className="mt-6 text-center text-sm text-gray-500 dark:text-gray-400">
-          <p>Built with React and Tailwind CSS. Solver powered by Python/Flask.</p>
-        </footer>
-      </div>
+      </main>
+      
+      <footer className="p-4 text-center text-sm text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 shadow-md">
+        <p>Sudoku Solver using Various Backtracking Algorithms - Computer Engineering Project</p>
+      </footer>
     </div>
   );
 };
