@@ -1,10 +1,8 @@
 import time
-from ..metrics import Metrics
 
 def solve(board):
-    """Forward Checking solver."""
+    """Forward Checking solver for Sudoku."""
     board_copy = [row[:] for row in board]
-    metrics = Metrics("ForwardChecking")
     start_time = time.time()
     
     # Initialize domains for all cells
@@ -16,106 +14,94 @@ def solve(board):
             else:
                 domains[(i, j)] = {board_copy[i][j]}
     
-    # Initial forward check to establish domains
-    for i in range(9):
-        for j in range(9):
-            if board_copy[i][j] != 0:
-                update_domains(domains, i, j, board_copy[i][j])
-    
     def get_related_cells(r, c):
         """Get all cells in the same row, column, and box."""
         related = set()
-        
         # Add cells in the same row
         for j in range(9):
             if j != c:
                 related.add((r, j))
-        
         # Add cells in the same column
         for i in range(9):
             if i != r:
                 related.add((i, c))
-        
         # Add cells in the same 3x3 box
         box_row, box_col = 3 * (r // 3), 3 * (c // 3)
         for i in range(box_row, box_row + 3):
             for j in range(box_col, box_col + 3):
                 if i != r or j != c:
                     related.add((i, j))
-        
         return related
     
     def update_domains(doms, r, c, val):
-        """Remove value from domains of related cells."""
-        changed = False
+        """Remove value from domains of related cells. Return False if domain wipeout occurs."""
         for cell in get_related_cells(r, c):
-            if val in doms[cell] and len(doms[cell]) > 1:
+            if cell in doms and val in doms[cell]:
                 doms[cell].remove(val)
-                metrics.count_prune()
-                changed = True
                 if len(doms[cell]) == 0:
                     return False  # Domain wipeout
-        return changed
+        return True
+    
+    # Initial domain update based on filled cells
+    for i in range(9):
+        for j in range(9):
+            if board_copy[i][j] != 0:
+                if not update_domains(domains, i, j, board_copy[i][j]):
+                    return board_copy, {"algorithm": "ForwardChecking", "time": 0, "nodes": 0, "assignments": 0, "backtracks": 0, "prunes": 0}, False
     
     def select_cell(doms):
-        """Find the empty cell with the fewest legal values (MRV)."""
-        min_remaining = 10  # More than possible values
+        """Select empty cell with minimum remaining values (MRV heuristic)."""
+        min_remaining = 10
         mrv_cell = None
-        
-        for cell, domain in doms.items():
-            if board_copy[cell[0]][cell[1]] == 0 and 1 < len(domain) < min_remaining:
-                min_remaining = len(domain)
-                mrv_cell = cell
-        
+        for i in range(9):
+            for j in range(9):
+                if board_copy[i][j] == 0:
+                    cell = (i, j)
+                    domain_size = len(doms[cell])
+                    if domain_size > 0 and domain_size < min_remaining:
+                        min_remaining = domain_size
+                        mrv_cell = cell
         return mrv_cell
     
     def backtrack(doms):
-        metrics.count_node()
-        # Find cell with minimum remaining values
+        """Recursive backtracking with forward checking."""
+        # Check if board is complete
         cell = select_cell(doms)
-        
-        # If no empty cell found, we've solved the puzzle
         if not cell:
+            # Verify if board is actually solved
+            for i in range(9):
+                for j in range(9):
+                    if board_copy[i][j] == 0:
+                        return False
             return True
         
         row, col = cell
-        domain_copy = doms[cell].copy()
+        domain_copy = list(doms[cell])  # Copy current domain to try values
         
-        # Try each value in the domain
         for num in domain_copy:
-            # Save domains for backtracking
-            domains_backup = {k: v.copy() for k, v in doms.items()}
-            
-            # Assign value
+            domains_backup = {k: v.copy() for k, v in doms.items()}  # Backup domains for backtracking
             board_copy[row][col] = num
-            metrics.count_assignment()
             doms[cell] = {num}
             
-            # Update domains of related cells
-            if update_domains(doms, row, col, num) is False:
-                # Domain wipeout, restore and try next value
-                board_copy[row][col] = 0
-                doms.update(domains_backup)
-                metrics.count_backtrack()
-                continue
+            if update_domains(doms, row, col, num):
+                if backtrack(doms):
+                    return True
             
-            # Recurse
-            if backtrack(doms):
-                return True
-            
-            # If recursive call fails, backtrack
+            # Backtrack if solution not found
             board_copy[row][col] = 0
             doms.update(domains_backup)
-            metrics.count_backtrack()
         
         return False
     
     result = backtrack(domains)
-    metrics.set_time(time.time() - start_time)
+    time_taken = time.time() - start_time
     
-    return board_copy, metrics.to_dict(), result
-
-def update_domains(domains, row, col, val):
-    """Helper for initial domain setup."""
-    pass  # This is just a stub, the real function is in the solve method
-
+    # Return in the format expected by solver.py
+    return board_copy, {
+        "algorithm": "ForwardChecking",
+        "time": time_taken,
+        "nodes": 0,
+        "assignments": 0,
+        "backtracks": 0,
+        "prunes": 0
+    }, result
